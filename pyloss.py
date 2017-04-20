@@ -102,11 +102,16 @@ class SoftmaxWithLossLayer(caffe.Layer):
 
     def compute_diff(self, prob, label):
         """Return sofmax loss derivative."""
+        # keep only valid labels
+        label_val = label.copy()
+        label_val[label == self._ignore_label] = 0
         # convert label to one hot
         n_cl = prob.shape[self._softmax_axis]
-        label_1hot = self.one_hot_encode(label, n_cl)
-        # compute derivative by y_ik - \delta(k=t_i)
+        label_1hot = self.one_hot_encode(label_val, n_cl)
+        # compute derivative by y_j - a_j
         diff = prob - label_1hot
+        diff[self.ignore_mask(label, dim=n_cl)] = 0
+        # normalize diff
         loss_weight = self._loss_weight / float(self.get_normalizer(label))
         bottom_diff = loss_weight * diff
         return bottom_diff
@@ -138,6 +143,15 @@ class SoftmaxWithLossLayer(caffe.Layer):
         label_1hot = np.eye(n_cl)[label_sqz]
         label_1hot = np.rollaxis(label_1hot, -1, self._softmax_axis)
         return label_1hot
+
+    def ignore_mask(self, label, dim=None):
+        """Return label ignore mask."""
+        if dim:
+            repeats = [1] * len(label.shape)
+            repeats[self._softmax_axis] = dim
+            return np.tile(label == self._ignore_label, repeats)
+        else:
+            return label == self._ignore_label
 
 
 class AsymmetricSoftmaxWithLossLayer(SoftmaxWithLossLayer):
@@ -171,19 +185,31 @@ class AsymmetricSoftmaxWithLossLayer(SoftmaxWithLossLayer):
 
     def compute_diff(self, prob, label):
         """Return softmax loss derivative."""
+        # keep only valid labels
+        label_val = label.copy()
+        label_val[label == self._ignore_label] = 0
         # convert label to one hot
         n_cl = prob.shape[self._softmax_axis]
-        label_1hot = self.one_hot_encode(label, n_cl)
-        # compute derivative by y_ik - \delta(k=t_i)
+        label_1hot = self.one_hot_encode(label_val, n_cl)
+        # compute derivative by w_t (a_j - y_j)
         diff = prob - label_1hot
-        # compute weighted diff
-        tiled_weights = self.get_tiled_weights(self._class_weight,
-                                               prob.shape)
-        diff = diff * tiled_weights
+        class_weights = self.get_class_weights(self._class_weight,
+                                               label_val)
+        diff = diff * class_weights
+        diff[self.ignore_mask(label, dim=n_cl)] = 0
         # normalize
         loss_weight = self._loss_weight / float(self.get_normalizer(label))
         bottom_diff = loss_weight * diff
         return bottom_diff
+
+    def get_class_weights(self, class_weight, label):
+        """Return of same shape as prob."""
+        label_sqz = np.squeeze(label, (self._softmax_axis,))
+        vget = np.vectorize(lambda cls: class_weight[cls])
+        class_weights = vget(label_sqz)
+        repeats = [1] * len(label.shape)
+        repeats[self._softmax_axis] = len(class_weight)
+        return np.tile(class_weights, repeats)
 
     def get_tiled_weights(self, class_weight, target_shape):
         """Return tiled class_weight."""
