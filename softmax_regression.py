@@ -86,7 +86,7 @@ class SoftmaxRegression(object):
                 # net_input, softmax and diff -> n_samples x n_classes:
                 net = self._net_input(X[idx], self.w_, self.b_)
                 softm = self._softmax(net)
-                diff = softm - y_enc[idx]
+                diff = self._diff(softm, y_enc[idx])
 
                 # gradient -> n_features x n_classes
                 grad = np.dot(X[idx].T, diff)
@@ -98,9 +98,8 @@ class SoftmaxRegression(object):
 
             # compute cost of the whole epoch
             net = self._net_input(X, self.w_, self.b_)
-            softm = self._softmax(net)
-            cross_ent = self._cross_entropy(output=softm, y_target=y_enc)
-            cost = self._cost(cross_ent)
+            prob = self._softmax(net)
+            cost = self._cost(prob, y_enc)
             self.cost_.append(cost)
         return self
 
@@ -175,15 +174,21 @@ class SoftmaxRegression(object):
         return (X.dot(W) + b)
 
     def _softmax(self, z):
+        z -= np.max(z, axis=1, keepdims=True)  # stable softmax
         return (np.exp(z.T) / np.sum(np.exp(z), axis=1)).T
 
-    def _cross_entropy(self, output, y_target):
-        return - np.sum(np.log(output) * (y_target), axis=1)
+    def _cross_entropy(self, q, p):
+        return - (p) * np.log(q)
 
-    def _cost(self, cross_entropy):
+    def _cost(self, prob, y_enc):
+        cross_entropy = self._cross_entropy(prob, y_enc)
+        cross_entropy = np.sum(cross_entropy, axis=1)
         L2_term = self.l2 * np.sum(self.w_ ** 2)
         cross_entropy = cross_entropy + L2_term
         return 0.5 * np.mean(cross_entropy)
+
+    def _diff(self, softm, y_enc):
+        return softm - y_enc
 
     def _to_classlabels(self, z):
         return z.argmax(axis=1)
